@@ -210,3 +210,19 @@ __marimo__/
 brain/
 siim-acr-pneumothorax/
 databases/
+
+paper/conference-latex-template.zip
+paper/siu_paper/IEEEtran.cls
+paper/siu_paper/siu_anatomy_aware_segmentation.aux
+paper/siu_paper/siu_anatomy_aware_segmentation.bbl
+paper/siu_paper/siu_anatomy_aware_segmentation.blg
+paper/siu_paper/siu_anatomy_aware_segmentation.log
+paper/siu_paper/siu_anatomy_aware_segmentation.out
+# paper/siu_paper/siu_anatomy_aware_segmentation.pdf
+paper/siu_paper/siu_anatomy_aware_segmentation.synctex.gz
+# paper/siu_paper/siu_anatomy_aware_segmentation.tex
+paper/siu_paper/siu_anatomy_aware_segmentation.toc
+paper/siu_paper/siu_anatomy_aware_segmentation.fdb_latexmk
+paper/siu_paper/siu_anatomy_aware_segmentation.fls
+
+classifier_output/

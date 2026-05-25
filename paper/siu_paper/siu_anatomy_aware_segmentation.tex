@@ -1,4 +1,4 @@
-\documentclass[conference]{IEEEtran}
+\documentclass[a4paper,conference]{IEEEtran}
 \IEEEoverridecommandlockouts
 
 \usepackage{cite}
@@ -21,7 +21,11 @@
 
 \title{Anatomy-Aware Routing for Robust Medical Image Segmentation: A Failure-Detectable Alternative to Mixed Models}
 
-\author{\IEEEauthorblockN{Anonymous}}
+\author{\IEEEauthorblockN{Musab Ahmed Khan}
+\IEEEauthorblockA{\textit{Sabanci University}\\musabahmedkhan22@gmail.com}
+\and
+\IEEEauthorblockN{Mohammed Sateh Salem}
+\IEEEauthorblockA{\textit{Sabanci University}\\satehsalam52@gmail.com}}
 
 \maketitle
 
@@ -41,13 +45,13 @@ Medical image segmentation increasingly relies on deep learning, yet deploying a
 
 Organ-specific specialisation offers an alternative. An anatomy-aware system $S^O$ employs an upstream classifier to route each input to a dedicated specialist network, so each model learns organ-specific features. This improves baseline performance, yet introduces a new failure mode: if the router misclassifies the input organ, the specialist receives out-of-distribution data, causing severe segmentation failure~\cite{b3}.
 
-This trade-off matters for clinical deployment, where silent degradation may be more dangerous than an outright failure that triggers a warning. Prior work on medical segmentation robustness focuses primarily on accuracy under corruption~\cite{b4,b5}, with limited analysis of routing-induced catastrophic failure, its detectability at inference time, and practical safety mechanisms.
+This trade-off matters for clinical deployment, where silent degradation may be more dangerous than an outright failure that triggers a warning. Recent work on trustworthy medical segmentation has examined out-of-distribution robustness, uncertainty estimation, and failure-aware inference~\cite{b3,b4,b5}, yet routing-induced catastrophic failure in anatomy-specialised pipelines remains underexplored.
 
 We make three contributions:
 \begin{enumerate}
 \item An anatomy-aware segmentation pipeline with controlled routing analysis across clean, noisy, and misrouted conditions.
-\item A robustness evaluation showing that specialisation improves accuracy and noise resilience under correct routing while producing sharp, detectable failure under misrouting.
-\item A post-hoc failure-aware inference mechanism combining MC Dropout uncertainty~\cite{b6}, feature-space domain-shift detection~\cite{b7}, and morphological plausibility checks, enabling deployment-time abstention without retraining.
+\item A robustness evaluation showing specialisation improves accuracy and noise resilience under correct routing, while producing sharp, detectable failure under misrouting.
+\item A post-hoc failure-aware inference mechanism combining MC Dropout uncertainty~\cite{b6}, feature-space domain-shift detection~\cite{b7}, and morphological plausibility checks for deployment-time abstention without retraining.
 \end{enumerate}
 
 %==============================================================
@@ -62,16 +66,18 @@ We compare two architectures. The mixed model $S^H$ is a single UNet++~\cite{b2}
 \centering
 \scalebox{0.75}{%
 \begin{tikzpicture}[
-    node distance=0.7cm and 0.9cm,
-    every node/.style={font=\footnotesize},
-    box/.style={draw, rounded corners, minimum height=0.55cm, minimum width=1.3cm, align=center, fill=#1!12},
+    node distance=0.55cm and 0.8cm,
+    every node/.style={font=\scriptsize},
+    box/.style={draw, rounded corners, minimum height=0.6cm, minimum width=1.6cm, align=center, fill=#1!12, inner sep=2pt},
     arr/.style={-{Stealth[length=2mm]}, thick}
 ]
-\node[box=gray] (inp) {Input};
-\node[box=blue, right=of inp] (rtr) {Router};
-\node[box=orange, above right=0.3cm and 0.8cm of rtr] (sL) {Lung\\[-1pt]Spec.};
-\node[box=teal, below right=0.3cm and 0.8cm of rtr] (sB) {Brain\\[-1pt]Spec.};
-\node[box=gray, right=2.8cm of rtr] (out) {Mask};
+\node[box=gray] (inp) {\textbf{Input}\\[-1pt]X-ray / MRI};
+\node[box=blue, right=of inp] (rtr) {\textbf{Router}\\[-1pt]ConvNeXt-T};
+\node[box=orange, above right=0.25cm and 0.7cm of rtr] (sL)
+  {\textbf{Lung UNet++}\\[-1pt]EffNet-B1 + SCSE, 512$^2$};
+\node[box=teal, below right=0.25cm and 0.7cm of rtr] (sB)
+  {\textbf{Brain UNet++}\\[-1pt]EffNet-B3 + SCSE, 256$^2$};
+\node[box=gray, right=2.9cm of rtr] (out) {\textbf{Mask}\\[-1pt]binary};
 
 \draw[arr] (inp) -- (rtr);
 \draw[arr] (rtr) |- (sL);
@@ -80,7 +86,7 @@ We compare two architectures. The mixed model $S^H$ is a single UNet++~\cite{b2}
 \draw[arr] (sB) -| (out);
 \end{tikzpicture}%
 }
-\caption{Anatomy-aware routing architecture. A ConvNeXt-Tiny classifier routes each input to the appropriate specialist UNet++ network.}
+\caption{Anatomy-aware routing architecture. A ConvNeXt-Tiny classifier routes each input to a dedicated UNet++ specialist with SCSE attention and encoder. The mixed baseline $S^H$ shares the lung backbone (UNet++/EffNet-B1, 256$^2$) but uses no attention and is trained jointly on both organs.}
 \label{fig:routing}
 \end{figure}
 
@@ -88,7 +94,7 @@ Since Dice collapse is not observable at deployment time (ground-truth masks are
 
 \subsection{Uncertainty Estimation}
 
-We employ MC Dropout~\cite{b6,b8} with $T{=}5$ stochastic forward passes per image at inference. For each pixel $(i,j)$, we compute the variance across passes and aggregate into a foreground-weighted scalar:
+We employ MC Dropout~\cite{b6,b8,b9} with $T{=}5$ stochastic forward passes per image at inference. For each pixel $(i,j)$, we compute the variance across passes and aggregate into a foreground-weighted scalar:
 \begin{equation}
 u = \frac{\sum_{ij} \text{Var}_t[\hat{y}_{t,ij}] \cdot \mathbf{1}[\bar{y}_{ij} > 0.05]}{\max(1,\; \sum_{ij} \mathbf{1}[\bar{y}_{ij} > 0.05])}
 \label{eq:uncertainty}
@@ -97,12 +103,12 @@ where $\bar{y}_{ij}$ is the mean predicted probability. Restricting to foregroun
 
 \subsection{Domain-Shift Detection}
 
-While MC Dropout captures epistemic uncertainty, it does not directly measure whether the input lies within the model's training distribution. We detect anatomical mismatch via Mahalanobis distance~\cite{b7} in encoder feature space. For each input, we extract the deepest encoder feature map, apply global average pooling and $L_2$ normalisation to obtain a feature vector $\mathbf{z}$, and compute:
+While MC Dropout captures epistemic uncertainty, it does not directly measure whether the input lies within the model's training distribution. We detect anatomical mismatch via Mahalanobis distance~\cite{b7,b10} in encoder feature space. For each input, we extract the deepest encoder feature map, apply global average pooling and $L_2$ normalisation to obtain a feature vector $\mathbf{z}$, and compute:
 \begin{equation}
 d_M(\mathbf{z}) = \sqrt{(\mathbf{z} - \boldsymbol{\mu})^\top \hat{\boldsymbol{\Sigma}}^{-1} (\mathbf{z} - \boldsymbol{\mu})}
 \label{eq:mahal}
 \end{equation}
-where $\boldsymbol{\mu}$ is the centroid of pooled (clean+noisy) training features and $\hat{\boldsymbol{\Sigma}}$ is a shrinkage-regularised covariance matrix ($\alpha{=}0.1$, Ledoit--Wolf~\cite{b9}). Unlike cosine distance, Mahalanobis distance accounts for the covariance structure: deviations along low-variance (discriminative) directions are penalised more heavily, giving better separation between in-distribution and out-of-distribution inputs. We establish a base threshold $d_{\text{thresh}}$ at the 87th percentile over calibration data.
+where $\boldsymbol{\mu}$ is the centroid of pooled (clean+noisy) training features and $\hat{\boldsymbol{\Sigma}}$ is a shrinkage-regularised covariance matrix ($\alpha{=}0.1$, Ledoit--Wolf~\cite{b11}). Unlike cosine distance, Mahalanobis distance accounts for the covariance structure: deviations along low-variance (discriminative) directions are penalised more heavily, giving better separation between in-distribution and out-of-distribution inputs. We establish a base threshold $d_{\text{thresh}}$ at the 87th percentile over calibration data.
 
 \subsection{Plausibility Checks and Composite Flagging}
 
@@ -118,9 +124,9 @@ A potential fourth basic signal, re-querying the router for its classification c
 
 \subsection{Experimental Setup}
 
-Lung segmentation uses a community-repackaged PNG version of the SIIM-ACR Pneumothorax competition data~\cite{b10,b11} (12,047 X-rays, binary masks). Brain segmentation uses LGG FLAIR MRI dataset~\cite{b12} (3,929 slices, 110 patients). Both are split 70/15/15\% train/val/test with stratified sampling.
+Lung segmentation uses a community-repackaged PNG version of the SIIM-ACR Pneumothorax competition data~\cite{b12,b13} (12,047 X-rays, binary masks). Brain segmentation uses LGG FLAIR MRI dataset~\cite{b14} (3,929 slices, 110 patients). Both are split 70/15/15\% train/val/test with stratified sampling.
 
-All models use UNet++ with EfficientNet encoders and BCE\,+\,Dice loss. Specialists employ SCSE attention~\cite{b13} and 0.1 decoder dropout. The mixed model omits attention because organ-specific spatial priors (e.g., ``focus on lung periphery'' vs.\ ``focus on cortical regions'') conflict when learned jointly, making shared attention counterproductive. Training uses AdamW~\cite{b14} with cosine-annealing scheduling and mixed-precision (FP16). Conservative augmentations (flips, mild rotations, brightness/contrast) are applied uniformly. Gaussian noise ($\sigma \in [0.08, 0.12]$) is added in normalised pixel space at test time to simulate mild acquisition perturbation, applied identically across all models.
+All models use UNet++ with EfficientNet encoders and BCE\,+\,Dice loss. Specialists employ SCSE attention~\cite{b15} and 0.1 decoder dropout. The mixed model omits attention because organ-specific spatial priors (e.g., ``focus on lung periphery'' vs.\ ``focus on cortical regions'') conflict when learned jointly, making shared attention counterproductive. Training uses AdamW~\cite{b16} with cosine-annealing scheduling and mixed-precision (FP16). Conservative augmentations (flips, mild rotations, brightness/contrast) are applied uniformly. Gaussian noise ($\sigma \in [0.08, 0.12]$) is added in normalised pixel space at test time to simulate mild acquisition perturbation, applied identically across all models.
 
 \subsection{Evaluation Scenarios}
 
@@ -157,8 +163,8 @@ Three patterns are visible across both domains. First, specialisation improves b
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{viz4_dice_boxplots.png}
-\caption{Per-case Dice score distributions. Specialists under correct routing (C1, C3) show tight, high-median distributions. Misrouting (C5, C6) produces near-zero medians with collapsed spread, while the mixed model (C2, C4) sits between the two extremes with no distinguishing signal.}
+\includegraphics[width=0.95\columnwidth]{viz4_dice_boxplots.png}
+\caption{Per-case Dice distributions. Specialists under correct routing (C1, C3) are tight and high; misrouting (C5, C6) collapses the median; the mixed model (C2, C4) lies between.}
 \label{fig:boxplots}
 \end{figure}
 
@@ -171,9 +177,9 @@ Beyond segmentation accuracy, Table~\ref{tab:combined} reports per-signal and co
 \caption{Segmentation and failure-detection results. $\bar{d}_M$ = mean Mahalanobis distance. Geom = morphological plausibility flag rate. Combo = combinatorial (unc+shift) flag rate. Flag = composite flag rate across all four conditions (extreme uncertainty, extreme shift, combinatorial, geometric). FP\textsubscript{raw}/FP\textsubscript{sys} = model/system-level false-positive rate. Sys Dice = system-level Dice (flagged images contribute 0).}
 \label{tab:combined}
 \vspace{-4pt}
-\renewcommand{\arraystretch}{1.0}
-\setlength{\tabcolsep}{3.5pt}
-{\footnotesize
+\renewcommand{\arraystretch}{0.85}
+\setlength{\tabcolsep}{5.5pt}
+{\scriptsize
 \begin{tabular}{@{}llcccccccccc@{}}
 \toprule
 & \textbf{Case} & \textbf{Dice} & \textbf{IoU} & \textbf{$\bar{u}$} & \textbf{$\bar{d}_M$} & \textbf{Geom} & \textbf{Combo} & \textbf{Flag} & \textbf{FP\textsubscript{raw}} & \textbf{FP\textsubscript{sys}} & \textbf{Sys Dice} \\
@@ -196,41 +202,41 @@ Beyond segmentation accuracy, Table~\ref{tab:combined} reports per-signal and co
 \bottomrule
 \end{tabular}
 }
-\vspace{-6pt}
+\vspace{-8pt}
 \end{table*}
 
 Misrouted cases produce near-total composite flagging (100\% for lung, 70.7--96.3\% for brain), with the extreme and combinatorial logic conditions successfully capturing erratic outputs. The mixed model under noise (Case~4) shows flag rates of 17.3\% (lung) and 15.6\% (brain), meaning its gradual degradation remains largely invisible to the monitoring system unless thresholds are tuned aggressively. The system-level false-positive rate (FP\textsubscript{sys}) demonstrates the safety value of abstention: for noisy misrouted pneumothorax, a huge FP\textsubscript{raw} of 90.3\% is reduced to 0.0\% after flagging. For clean misrouted pneumothorax, an initial 74.5\% FP rate is likewise reduced to 0.0\%. Fig.~\ref{fig:uncmaps} shows representative predictions with pixel-level uncertainty overlays: correctly routed cases exhibit low, uniform uncertainty, while misrouted cases produce high uncertainty concentrated around spurious activations. The per-signal flag decomposition is shown in Fig.~\ref{fig:flag_breakdown}.
 
 \begin{figure}[t]
 \centering
-\begin{subfigure}[t]{0.48\columnwidth}
+\begin{subfigure}[t]{0.46\columnwidth}
     \centering
     \includegraphics[width=\linewidth]{viz2_uncertainty_maps.png}
     \caption{Pneumothorax specialist}
     \label{fig:viz2a}
 \end{subfigure}
 \hfill
-\begin{subfigure}[t]{0.48\columnwidth}
+\begin{subfigure}[t]{0.46\columnwidth}
     \centering
     \includegraphics[width=\linewidth]{viz2b_uncertainty_maps.png}
     \caption{Brain MRI specialist}
     \label{fig:viz2b}
 \end{subfigure}
-\caption{Prediction galleries with MC-Dropout uncertainty overlays across evaluation cases. Low uncertainty (dark) indicates confident predictions under correct routing; high uncertainty (bright) highlights unreliable regions under misrouting or noise.}
+\caption{MC-Dropout uncertainty overlays. Low uncertainty (dark) marks confident routing; high uncertainty (bright) marks misrouting/noise.}
 \label{fig:uncmaps}
 \end{figure}
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{viz5_flag_breakdown.png}
-\caption{Flag signal decomposition per case. The Mahalanobis domain-shift signal (orange) dominates misroute detection. 100\% flagging coverage on pneumothorax misroutes and 75--99\% on brain. Uncertainty (blue) provides complementary coverage.}
+\includegraphics[width=0.95\columnwidth]{viz5_flag_breakdown.png}
+\caption{Flag decomposition per case. Domain-shift (orange) dominates misroutes; uncertainty (blue) is complementary.}
 \label{fig:flag_breakdown}
 \end{figure}
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\columnwidth]{viz1_uncertainty_vs_dice.png}
-\caption{Uncertainty vs.\ Dice score per image. Correctly routed cases (C1--C4) cluster in the low-uncertainty, high-Dice region. Misrouted cases (C5, C6) shift towards high uncertainty and low Dice, confirming that MC-Dropout uncertainty is a reliable proxy for segmentation failure.}
+\includegraphics[width=0.95\columnwidth]{viz1_uncertainty_vs_dice.png}
+\caption{Uncertainty vs.\ Dice per image. Correct routing (C1--C4) clusters low-unc/high-Dice; misroutes (C5, C6) shift high-unc/low-Dice.}
 \label{fig:scatter}
 \end{figure}
 
@@ -246,7 +252,7 @@ These results point to a clear design trade-off. The mixed model never collapses
 
 The anatomy-aware system also provides layered safety: (i)~high-confidence routing ($>$99\% classifier accuracy) makes misrouting rare; (ii)~the composite failure detector catches it when it occurs; (iii)~flagged predictions trigger fallback, whether deferral to mixed models, human review, or explicit abstention. The framework reduces false-positives from 90.3\% to 0.0\% on misrouted pneumothorax cases, confirming that anatomy-aware pipelines combine higher accuracy with the ability to \emph{fail loudly} and support safer clinical deployment.
 
-Our evaluation is limited to a binary organ setting; scaling to $k>2$ specialists remains untested. The synthetic Gaussian noise model may not capture realistic acquisition artefacts (motion blur, metal artefacts, scanner drift), and the empirically chosen detection thresholds would require recalibration for new hardware or populations. Future work will extend the framework to multi-organ routing, investigate learned plausibility checks, incorporate explainability techniques such as Grad-CAM, and validate on clinical data with real-world distribution shifts.
+Our two-organ scope reflects compute constraints (single Tesla P100 with limited free-tier runtime); scaling to $k>2$ specialists remains untested. The synthetic Gaussian noise model may not capture realistic acquisition artefacts (motion blur, metal artefacts, scanner drift), and the empirically chosen detection thresholds would need recalibration for new hardware or populations. Future work will extend the framework to multi-organ routing, investigate learned plausibility checks, incorporate explainability techniques such as Grad-CAM, and validate on clinical data with real-world distribution shifts.
 
 %==============================================================
 % REFERENCES
@@ -254,18 +260,20 @@ Our evaluation is limited to a binary organ setting; scaling to $k>2$ specialist
 \begin{thebibliography}{00}
 \bibitem{b1} O.~Ronneberger, P.~Fischer, and T.~Brox, ``U-Net: convolutional networks for biomedical image segmentation,'' in \emph{Proc.\ MICCAI}, 2015, pp.~234--241.
 \bibitem{b2} Z.~Zhou, M.~M.~R.~Siddiquee, N.~Tajbakhsh, and J.~Liang, ``UNet++: a nested U-Net architecture for medical image segmentation,'' in \emph{Proc.\ DLMIA/ML-CDS}, 2018, pp.~3--11.
-\bibitem{b3} G.~Litjens \emph{et al.}, ``A survey on deep learning in medical image analysis,'' \emph{Med.\ Image Anal.}, vol.~42, pp.~60--88, 2017.
+\bibitem{b3} Z.~Hong \emph{et al.}, ``Out-of-distribution detection in medical image analysis: a survey,'' \emph{arXiv:2404.18279}, 2024.
 \bibitem{b4} D.~Hendrycks and T.~Dietterich, ``Benchmarking neural network robustness to common corruptions and perturbations,'' in \emph{Proc.\ ICLR}, 2019.
 \bibitem{b5} A.~Jungo \emph{et al.}, ``On the effect of inter-observer variability for a reliable estimation of uncertainty of medical image segmentation,'' in \emph{Proc.\ MICCAI}, 2018, pp.~682--690.
 \bibitem{b6} Y.~Gal and Z.~Ghahramani, ``Dropout as a Bayesian approximation: representing model uncertainty in deep learning,'' in \emph{Proc.\ ICML}, 2016, pp.~1050--1059.
 \bibitem{b7} K.~Lee, K.~Lee, H.~Lee, and J.~Shin, ``A simple unified framework for detecting out-of-distribution samples and adversarial attacks,'' in \emph{Proc.\ NeurIPS}, 2018, pp.~7167--7177.
 \bibitem{b8} T.~Nair, D.~Precup, D.~L.~Arnold, and T.~Arbel, ``Exploring uncertainty measures in deep networks for multiple sclerosis lesion detection and segmentation,'' \emph{Med.\ Image Anal.}, vol.~59, 2020, Art.~no.~101557.
-\bibitem{b9} O.~Ledoit and M.~Wolf, ``A well-conditioned estimator for large-dimensional covariance matrices,'' \emph{J.\ Multivariate Anal.}, vol.~88, no.~2, pp.~365--411, 2004.
-\bibitem{b10} ``SIIM-ACR Pneumothorax Segmentation,'' Society for Imaging Informatics in Medicine, 2019. [Online]. Available: \url{https://www.kaggle.com/c/siim-acr-pneumothorax-segmentation}
-\bibitem{b11} ``Chest X-Ray Images with Pneumothorax Masks,'' Kaggle, 2019. [Online]. Available: \url{https://www.kaggle.com/datasets/vbookshelf/pneumothorax-chest-xray-images-and-masks}
-\bibitem{b12} M.~Buda, A.~Saha, and M.~A.~Mazurowski, ``Association of genomic subtypes of lower-grade gliomas with shape features automatically extracted by a deep learning algorithm,'' \emph{Comput.\ Biol.\ Med.}, vol.~109, pp.~218--225, 2019. [Online]. Available: \url{https://www.kaggle.com/datasets/mateuszbuda/lgg-mri-segmentation}
-\bibitem{b13} A.~G.~Roy, N.~Navab, and C.~Wachinger, ``Concurrent spatial and channel squeeze \& excitation in fully convolutional networks,'' in \emph{Proc.\ MICCAI}, 2018, pp.~421--429.
-\bibitem{b14} D.~P.~Kingma and J.~Ba, ``Adam: a method for stochastic optimization,'' in \emph{Proc.\ ICLR}, 2015.
+\bibitem{b9} S.~Wang \emph{et al.}, ``Towards generalizable medical image segmentation with pixel-wise uncertainty estimation,'' \emph{arXiv:2305.07883}, 2023.
+\bibitem{b10} A.~Vasiliuk, D.~Frolova, M.~Belyaev, and B.~Shirokikh, ``Limitations of out-of-distribution detection in 3D medical image segmentation,'' \emph{J.\ Imaging}, vol.~9, no.~9, 2023, Art.~no.~191.
+\bibitem{b11} O.~Ledoit and M.~Wolf, ``A well-conditioned estimator for large-dimensional covariance matrices,'' \emph{J.\ Multivariate Anal.}, vol.~88, no.~2, pp.~365--411, 2004.
+\bibitem{b12} ``SIIM-ACR Pneumothorax Segmentation,'' Society for Imaging Informatics in Medicine, 2019. [Online]. Available: \url{https://www.kaggle.com/c/siim-acr-pneumothorax-segmentation}
+\bibitem{b13} ``Chest X-Ray Images with Pneumothorax Masks,'' Kaggle, 2019. [Online]. Available: \url{https://www.kaggle.com/datasets/vbookshelf/pneumothorax-chest-xray-images-and-masks}
+\bibitem{b14} M.~Buda, A.~Saha, and M.~A.~Mazurowski, ``Association of genomic subtypes of lower-grade gliomas with shape features automatically extracted by a deep learning algorithm,'' \emph{Comput.\ Biol.\ Med.}, vol.~109, pp.~218--225, 2019. [Online]. Available: \url{https://www.kaggle.com/datasets/mateuszbuda/lgg-mri-segmentation}
+\bibitem{b15} A.~G.~Roy, N.~Navab, and C.~Wachinger, ``Concurrent spatial and channel squeeze \& excitation in fully convolutional networks,'' in \emph{Proc.\ MICCAI}, 2018, pp.~421--429.
+\bibitem{b16} D.~P.~Kingma and J.~Ba, ``Adam: a method for stochastic optimization,'' in \emph{Proc.\ ICLR}, 2015.
 \end{thebibliography}
 
 \end{document}

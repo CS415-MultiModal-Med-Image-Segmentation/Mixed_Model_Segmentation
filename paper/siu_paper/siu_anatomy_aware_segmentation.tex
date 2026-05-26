@@ -60,11 +60,11 @@ We make three contributions:
 
 \subsection{Systems Compared}
 
-We compare two architectures. The mixed model $S^H$ is a single UNet++~\cite{b2} trained jointly on both lung (pneumothorax) and brain (LGG tumor) data. The anatomy-aware system $S^O$ consists of a router classifier followed by dedicated specialist UNet++ networks, one per organ (Fig.~\ref{fig:routing}). Both share the same backbone family and loss function to isolate the effect of routing.
+We compare two architectures. The mixed model $S^H$ is a single UNet++~\cite{b2} trained jointly on both lung (pneumothorax) and brain (LGG tumor) data. The anatomy-aware system $S^O$ consists of a router classifier followed by dedicated specialist UNet++ networks, one per organ (Fig.~\ref{fig:routing}; the router achieves $>$99\% validation accuracy in our binary lung--brain setting). Both share the same backbone family (per-model encoder and loss-weight details in Fig.~\ref{fig:routing}) to isolate the effect of routing.
 
 \begin{figure}[t]
 \centering
-\scalebox{0.75}{%
+\scalebox{0.72}{%
 \begin{tikzpicture}[
     node distance=0.55cm and 0.8cm,
     every node/.style={font=\scriptsize},
@@ -74,10 +74,10 @@ We compare two architectures. The mixed model $S^H$ is a single UNet++~\cite{b2}
 \node[box=gray] (inp) {\textbf{Input}\\[-1pt]X-ray / MRI};
 \node[box=blue, right=of inp] (rtr) {\textbf{Router}\\[-1pt]ConvNeXt-T};
 \node[box=orange, above right=0.25cm and 0.7cm of rtr] (sL)
-  {\textbf{Lung UNet++}\\[-1pt]EffNet-B1 + SCSE, 512$^2$};
+  {\textbf{Lung UNet++}\\[-1pt]EffNet-B1 + SCSE, drop=0.1, 512$^2$\\[-1pt]BCE + 1.5$\cdot$Dice};
 \node[box=teal, below right=0.25cm and 0.7cm of rtr] (sB)
-  {\textbf{Brain UNet++}\\[-1pt]EffNet-B3 + SCSE, 256$^2$};
-\node[box=gray, right=2.9cm of rtr] (out) {\textbf{Mask}\\[-1pt]binary};
+  {\textbf{Brain UNet++}\\[-1pt]EffNet-B3 + SCSE, drop=0.1, 256$^2$\\[-1pt]BCE + 1.0$\cdot$Dice};
+\node[box=gray, right=5cm of rtr] (out) {\textbf{Mask}\\[-1pt]binary ($\sigma{>}0.5$)};
 
 \draw[arr] (inp) -- (rtr);
 \draw[arr] (rtr) |- (sL);
@@ -86,7 +86,7 @@ We compare two architectures. The mixed model $S^H$ is a single UNet++~\cite{b2}
 \draw[arr] (sB) -| (out);
 \end{tikzpicture}%
 }
-\caption{Anatomy-aware routing architecture. A ConvNeXt-Tiny classifier routes each input to a dedicated UNet++ specialist with SCSE attention and encoder. The mixed baseline $S^H$ shares the lung backbone (UNet++/EffNet-B1, 256$^2$) but uses no attention and is trained jointly on both organs.}
+\caption{Anatomy-aware routing architecture. A ConvNeXt-Tiny classifier routes each input to a dedicated UNet++ specialist with SCSE attention and encoder. The mixed model $S^H$ shares lung backbone (UNet++/EffNet-B1, 256$^2$, BCE + 1.0$\cdot$Dice) but no attention and is trained jointly on both organs.}
 \label{fig:routing}
 \end{figure}
 
@@ -126,7 +126,7 @@ A potential fourth basic signal, re-querying the router for its classification c
 
 Lung segmentation uses a community-repackaged PNG version of the SIIM-ACR Pneumothorax competition data~\cite{b12,b13} (12,047 X-rays, binary masks). Brain segmentation uses LGG FLAIR MRI dataset~\cite{b14} (3,929 slices, 110 patients). Both are split 70/15/15\% train/val/test with stratified sampling.
 
-All models use UNet++ with EfficientNet encoders and BCE\,+\,Dice loss. Specialists employ SCSE attention~\cite{b15} and 0.1 decoder dropout. The mixed model omits attention because organ-specific spatial priors (e.g., ``focus on lung periphery'' vs.\ ``focus on cortical regions'') conflict when learned jointly, making shared attention counterproductive. Training uses AdamW~\cite{b16} with cosine-annealing scheduling and mixed-precision (FP16). Conservative augmentations (flips, mild rotations, brightness/contrast) are applied uniformly. Gaussian noise ($\sigma \in [0.08, 0.12]$) is added in normalised pixel space at test time to simulate mild acquisition perturbation, applied identically across all models.
+All models use UNet++ with EfficientNet encoders and BCE\,+\,Dice loss. Specialists employ SCSE attention~\cite{b15} and 0.1 decoder dropout. The mixed model omits attention because organ-specific spatial priors (e.g., ``focus on lung periphery'' vs.\ ``focus on cortical regions'') conflict when learned jointly, making shared attention counterproductive. Training uses AdamW~\cite{b16} with cosine-annealing scheduling and mixed-precision (FP16). Augmentations (flips, mild rotations, brightness/contrast) are tailored per-organ: brain omits horizontal flip due to anatomical laterality, while lung uses conservative geometric parameters to preserve thin pneumothorax structures. Gaussian noise ($\sigma \in [0.08, 0.12]$) is added in normalised pixel space at test time to simulate mild acquisition perturbation, applied identically across all models. Individual-model training additionally applies class weight rebalancing, validation-set threshold optimisation, and optional test-time augmentation.
 
 \subsection{Evaluation Scenarios}
 
@@ -155,9 +155,7 @@ We evaluate six scenarios per organ domain (Table~\ref{tab:scenarios}). Cases~1-
 
 \subsection{Segmentation Results}
 
-Table~\ref{tab:combined} (top) reports lung test-set results ($n{=}1000$, stratified). The pneumothorax specialist ($S^O$) achieves 0.8387 clean Dice versus 0.6952 for the mixed model, a +14.35 point advantage. Under noise, $S^O$ drops to 0.6837 ($-$15.5~pts) while $S^H$ degrades to 0.6394 ($-$5.58~pts from its lower baseline). Misrouting (brain specialist on lung data) collapses Dice to 0.0584 (noisy) and 0.1532 (clean). Notably, the composite failure detector flags 100\% of misrouted cases.
-
-Table~\ref{tab:combined} (bottom) reports brain MRI results ($n{=}1000$, stratified). The specialist achieves 0.9326 clean Dice versus 0.8467 for $S^H$ (+8.59~pts). Noise reduces $S^O$ modestly to 0.8739 ($-$5.87~pts), whereas $S^H$ drops to 0.8285 ($-$1.82~pts). Misrouting collapses Dice to 0.5560 (noisy) and 0.5102 (clean), with flag rates of 0.707 and 0.963, respectively.
+Table~\ref{tab:combined} reports both segmentation performance and composite-detector flag rates across all routing scenarios ($n{=}1000$ per domain, stratified).
 
 Three patterns are visible across both domains. First, specialisation improves both accuracy and robustness under correct routing: the anatomy-aware system consistently outperforms the mixed model by +8.59 (brain) and +14.35 (lung) Dice on clean data. Second, misrouting causes sharp Dice collapse by 38--78 points when the wrong specialist is applied, regardless of input quality (Fig.~\ref{fig:boxplots}). Third, the mixed model degrades gradually but without any alarm; its decline produces no signal easily distinguishable from normal operation. This asymmetry between sharp-detectable and gradual-silent failure motivates the detectability analysis below.
 
@@ -205,7 +203,7 @@ Beyond segmentation accuracy, Table~\ref{tab:combined} reports per-signal and co
 \vspace{-8pt}
 \end{table*}
 
-Misrouted cases produce near-total composite flagging (100\% for lung, 70.7--96.3\% for brain), with the extreme and combinatorial logic conditions successfully capturing erratic outputs. The mixed model under noise (Case~4) shows flag rates of 17.3\% (lung) and 15.6\% (brain), meaning its gradual degradation remains largely invisible to the monitoring system unless thresholds are tuned aggressively. The system-level false-positive rate (FP\textsubscript{sys}) demonstrates the safety value of abstention: for noisy misrouted pneumothorax, a huge FP\textsubscript{raw} of 90.3\% is reduced to 0.0\% after flagging. For clean misrouted pneumothorax, an initial 74.5\% FP rate is likewise reduced to 0.0\%. Fig.~\ref{fig:uncmaps} shows representative predictions with pixel-level uncertainty overlays: correctly routed cases exhibit low, uniform uncertainty, while misrouted cases produce high uncertainty concentrated around spurious activations. The per-signal flag decomposition is shown in Fig.~\ref{fig:flag_breakdown}.
+The composite detector exhibits a clear asymmetry. Misrouted cases (5--6) are flagged at near-total rates by the extreme and combinatorial logic conditions, while the mixed model under noise (Case~4) is flagged only marginally, leaving its gradual decline largely invisible to the monitoring system unless thresholds are tuned aggressively. The system-level false-positive rate (FP\textsubscript{sys}) demonstrates the safety value of abstention: model-level FP rates as high as 90.3\% on misrouted pneumothorax are reduced to 0.0\% after flagging. Fig.~\ref{fig:uncmaps} shows representative predictions with pixel-level uncertainty overlays: correctly routed cases exhibit low, uniform uncertainty, while misrouted cases produce high uncertainty concentrated around spurious activations. The per-signal flag decomposition is shown in Fig.~\ref{fig:flag_breakdown}.
 
 \begin{figure}[t]
 \centering
